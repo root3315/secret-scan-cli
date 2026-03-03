@@ -50,6 +50,73 @@ The scanner looks for common secret patterns:
 - Generic API key patterns
 - Basic auth headers
 
+## Custom Patterns
+
+Add your own detection patterns for project-specific secrets.
+
+### Using a JSON File
+
+Create a JSON file with your custom patterns:
+
+```json
+{
+    "Internal API Key": {
+        "pattern": "INT_API_[a-zA-Z0-9]{32}",
+        "message": "Internal API key detected"
+    },
+    "Database Password": {
+        "pattern": "(?i)db_password\\s*=\\s*[\"'][^\"']+[\"']",
+        "message": "Database password in config detected"
+    }
+}
+```
+
+Then use it with:
+
+```bash
+python secret_scan.py . --patterns custom_patterns.json
+```
+
+### Inline Patterns
+
+Add patterns directly via command line:
+
+```bash
+python secret_scan.py . --pattern "MyService:MS_[a-z]{20}:MyService API key detected"
+```
+
+Format: `name:regex:message`
+
+Multiple patterns can be added:
+
+```bash
+python secret_scan.py . \
+  --pattern "Service1:SVC1_[a-z]{10}:Service1 key" \
+  --pattern "Service2:SVC2_[a-z]{10}:Service2 key"
+```
+
+### Combining Patterns
+
+Use custom patterns only (no default patterns):
+
+```bash
+python secret_scan.py . --patterns custom.json --default-patterns
+```
+
+Or combine custom patterns with defaults (default behavior):
+
+```bash
+python secret_scan.py . --patterns custom.json --pattern "Extra:EX_[0-9]{5}:Extra pattern"
+```
+
+### Listing Active Patterns
+
+See all patterns that will be used during scanning:
+
+```bash
+python secret_scan.py . --list-patterns
+```
+
 ## Exit Codes
 
 - `0` - No secrets found, all good
