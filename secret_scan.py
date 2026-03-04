@@ -4,6 +4,7 @@ Secret Scan CLI - Scan codebases for leaked secrets and credentials
 """
 
 import argparse
+import json
 import os
 import re
 import sys
@@ -50,7 +51,7 @@ SECRET_PATTERNS: Dict[str, Tuple[str, str]] = {
 }
 
 DEFAULT_EXCLUDE_DIRS = {
-    '.git', '.svn', '.hg', 'node_modules', '__pycache__', 'venv', 
+    '.git', '.svn', '.hg', 'node_modules', '__pycache__', 'venv',
     'env', '.venv', 'vendor', 'dist', 'build', '.idea', '.vscode',
     'coverage', '.tox', '.eggs', '*.egg-info', 'migrations'
 }
@@ -184,6 +185,63 @@ def print_findings(findings: List[Dict], output_format: str = 'text') -> None:
         print()
 
 
+def load_custom_patterns(pattern_file: str) -> Dict[str, Tuple[str, str]]:
+    """Load custom patterns from a JSON file.
+    
+    Expected format:
+    {
+        "Pattern Name": {
+            "pattern": "regex_pattern",
+            "message": "Description message"
+        }
+    }
+    """
+    try:
+        with open(pattern_file, 'r') as f:
+            data = json.load(f)
+    except (IOError, OSError) as e:
+        print(colorize(f"Error reading patterns file: {e}", "red"))
+        sys.exit(1)
+    except json.JSONDecodeError as e:
+        print(colorize(f"Error parsing patterns file: Invalid JSON - {e}", "red"))
+        sys.exit(1)
+
+    custom_patterns = {}
+    for name, config in data.items():
+        if not isinstance(config, dict):
+            print(colorize(f"Warning: Skipping '{name}' - invalid format", "yellow"))
+            continue
+        pattern = config.get('pattern')
+        message = config.get('message', f"Custom pattern '{name}' detected")
+        if pattern:
+            try:
+                re.compile(pattern)
+                custom_patterns[name] = (pattern, message)
+            except re.error as e:
+                print(colorize(f"Warning: Skipping '{name}' - invalid regex: {e}", "yellow"))
+        else:
+            print(colorize(f"Warning: Skipping '{name}' - missing 'pattern' field", "yellow"))
+
+    return custom_patterns
+
+
+def parse_inline_pattern(pattern_str: str) -> Tuple[str, str, str]:
+    """Parse inline pattern string in format: name:regex:message
+    
+    Returns (name, pattern, message) tuple.
+    """
+    parts = pattern_str.split(':', 2)
+    if len(parts) < 2:
+        raise ValueError("Pattern must be in format: name:regex:message")
+    
+    name = parts[0].strip()
+    pattern = parts[1].strip()
+    message = parts[2].strip() if len(parts) > 2 else f"Custom pattern '{name}' detected"
+    
+    re.compile(pattern)
+    return name, pattern, message
+
+
 def main():
     parser = argparse.ArgumentParser(
         description='Scan codebases for leaked secrets and credentials',
@@ -194,6 +252,8 @@ Examples:
   %(prog)s . --exclude-dirs node_modules,venv
   %(prog)s . --format json --output results.json
   %(prog)s . --verbose
+  %(prog)s . --patterns custom_patterns.json
+  %(prog)s . --pattern "MyAPI:api_[a-z]{10}:MyAPI key detected"
         """
     )
 
@@ -237,14 +297,53 @@ Examples:
         action='store_true',
         help='List all detection patterns and exit'
     )
+    parser.add_argument(
+        '--patterns',
+        type=str,
+        metavar='FILE',
+        help='Load custom patterns from a JSON file'
+    )
+    parser.add_argument(
+        '--pattern',
+        action='append',
+        metavar='NAME:REGEX:MESSAGE',
+        help='Add a custom pattern (format: name:regex:message). Can be used multiple times.'
+    )
+    parser.add_argument(
+        '--default-patterns',
+        action='store_true',
+        help='Use only default patterns (ignore custom patterns from --patterns/--pattern)'
+    )
 
     args = parser.parse_args()
 
+    patterns = {}
+
+    if not args.default_patterns:
+        patterns = SECRET_PATTERNS.copy()
+
+    if args.patterns:
+        custom_file_patterns = load_custom_patterns(args.patterns)
+        patterns.update(custom_file_patterns)
+
+    if args.pattern:
+        for pattern_str in args.pattern:
+            try:
+                name, pattern, message = parse_inline_pattern(pattern_str)
+                patterns[name] = (pattern, message)
+            except re.error as e:
+                print(colorize(f"Error in pattern '{pattern_str}': Invalid regex - {e}", "red"))
+                return 1
+            except ValueError as e:
+                print(colorize(f"Error in pattern '{pattern_str}': {e}", "red"))
+                return 1
+
     if args.list_patterns:
         print("Available secret detection patterns:\n")
-        for name, (pattern, message) in SECRET_PATTERNS.items():
+        for name, (pattern, message) in patterns.items():
             print(f"  - {name}")
             print(f"    {message}")
+            print(f"    Pattern: {pattern}")
             print()
         return 0
 
@@ -269,11 +368,12 @@ Examples:
     if args.verbose:
         print(f"Scanning directory: {root_path}")
         print(f"Excluded directories: {', '.join(sorted(exclude_dirs))}")
+        print(f"Active patterns: {len(patterns)}")
         print()
 
     findings = scan_directory(
         root_path,
-        SECRET_PATTERNS,
+        patterns,
         exclude_dirs,
         exclude_files,
         args.verbose
