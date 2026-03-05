@@ -50,6 +50,50 @@ The scanner looks for common secret patterns:
 - Generic API key patterns
 - Basic auth headers
 
+## Configuration File
+
+Set default options in a `.secret_scan.json` file. The tool looks for this file in:
+
+1. Current working directory
+2. User's home directory
+
+CLI arguments always override config file values.
+
+### Config File Format
+
+```json
+{
+  "exclude_dirs": ["node_modules", "venv", ".git", "build"],
+  "exclude_files": ["*.min.js", "*.lock", "yarn.lock"],
+  "format": "json",
+  "verbose": false,
+  "patterns": "custom_patterns.json",
+  "default_patterns": true
+}
+```
+
+### Config Options
+
+| Option | Type | Description |
+|--------|------|-------------|
+| `exclude_dirs` | array/string | Directories to exclude from scanning |
+| `exclude_files` | array/string | File patterns to exclude from scanning |
+| `format` | string | Output format: `text` or `json` |
+| `verbose` | boolean | Enable verbose output |
+| `patterns` | string | Path to custom patterns JSON file |
+| `default_patterns` | boolean | Use only default patterns (ignore custom) |
+
+### Example Config
+
+```json
+{
+  "exclude_dirs": ["node_modules", "venv", ".git", "dist", "build"],
+  "exclude_files": ["*.min.js", "*.min.css", "*.lock"],
+  "format": "text",
+  "verbose": true
+}
+```
+
 ## Custom Patterns
 
 Add your own detection patterns for project-specific secrets.
@@ -152,6 +196,7 @@ Text output looks like:
 - Add it to your CI pipeline before deployment
 - Use `--verbose` to see what's being scanned (helpful for debugging exclude patterns)
 - The default exclusions cover common directories like `node_modules`, `venv`, `.git`, etc.
+- Use a config file to avoid repeating the same options every time
 
 ## Limitations
 
