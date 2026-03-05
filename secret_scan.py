@@ -9,7 +9,7 @@ import os
 import re
 import sys
 from pathlib import Path
-from typing import List, Tuple, Dict
+from typing import List, Tuple, Dict, Any, Optional
 
 try:
     from colorama import Fore, Style, init
@@ -61,6 +61,8 @@ DEFAULT_EXCLUDE_FILES = {
     '*.min.js', '*.min.css', '*.lock', 'package-lock.json', 'yarn.lock'
 }
 
+CONFIG_FILENAMES = ['.secret_scan.json', 'secret_scan.json']
+
 
 def colorize(text: str, color: str) -> str:
     if COLORS_AVAILABLE:
@@ -74,6 +76,61 @@ def colorize(text: str, color: str) -> str:
         }
         return f"{color_map.get(color, '')}{text}{Style.RESET_ALL}"
     return text
+
+
+def load_config() -> Dict[str, Any]:
+    """Load configuration from JSON file.
+    
+    Searches for config file in:
+    1. Current working directory
+    2. User's home directory
+    
+    Returns empty dict if no config file is found.
+    """
+    search_paths = [
+        Path.cwd() / '.secret_scan.json',
+        Path.cwd() / 'secret_scan.json',
+        Path.home() / '.secret_scan.json',
+        Path.home() / 'secret_scan.json',
+    ]
+    
+    for config_path in search_paths:
+        if config_path.exists():
+            try:
+                with open(config_path, 'r') as f:
+                    config = json.load(f)
+                if not isinstance(config, dict):
+                    print(colorize(f"Warning: Config file {config_path} is not a JSON object, ignoring", "yellow"))
+                    return {}
+                return config
+            except json.JSONDecodeError as e:
+                print(colorize(f"Warning: Invalid JSON in {config_path}: {e}", "yellow"))
+                return {}
+            except (IOError, OSError) as e:
+                print(colorize(f"Warning: Could not read {config_path}: {e}", "yellow"))
+                return {}
+    
+    return {}
+
+
+def parse_config_value(key: str, value: Any) -> Any:
+    """Parse and validate config values based on key."""
+    if key in ('exclude_dirs', 'exclude_files'):
+        if isinstance(value, list):
+            return set(value)
+        elif isinstance(value, str):
+            return set(v.strip() for v in value.split(','))
+    elif key == 'verbose':
+        return bool(value)
+    elif key == 'format':
+        if value in ('text', 'json'):
+            return value
+    elif key == 'patterns':
+        if isinstance(value, str):
+            return value
+    elif key == 'default_patterns':
+        return bool(value)
+    return value
 
 
 def should_exclude_file(filepath: Path, exclude_files: set) -> bool:
@@ -187,7 +244,7 @@ def print_findings(findings: List[Dict], output_format: str = 'text') -> None:
 
 def load_custom_patterns(pattern_file: str) -> Dict[str, Tuple[str, str]]:
     """Load custom patterns from a JSON file.
-    
+
     Expected format:
     {
         "Pattern Name": {
@@ -227,22 +284,63 @@ def load_custom_patterns(pattern_file: str) -> Dict[str, Tuple[str, str]]:
 
 def parse_inline_pattern(pattern_str: str) -> Tuple[str, str, str]:
     """Parse inline pattern string in format: name:regex:message
-    
+
     Returns (name, pattern, message) tuple.
     """
     parts = pattern_str.split(':', 2)
     if len(parts) < 2:
         raise ValueError("Pattern must be in format: name:regex:message")
-    
+
     name = parts[0].strip()
     pattern = parts[1].strip()
     message = parts[2].strip() if len(parts) > 2 else f"Custom pattern '{name}' detected"
-    
+
     re.compile(pattern)
     return name, pattern, message
 
 
+def merge_args_with_config(args: argparse.Namespace, config: Dict[str, Any]) -> argparse.Namespace:
+    """Merge CLI args with config values. CLI args take precedence.
+    
+    Only override args that weren't explicitly set via CLI.
+    """
+    config_mappings = {
+        'exclude_dirs': ('exclude_dirs', lambda v: ','.join(v) if isinstance(v, (list, set)) else v),
+        'exclude_files': ('exclude_files', lambda v: ','.join(v) if isinstance(v, (list, set)) else v),
+        'format': ('format', lambda v: v),
+        'verbose': ('verbose', lambda v: v),
+        'patterns': ('patterns', lambda v: v),
+        'default_patterns': ('default_patterns', lambda v: v),
+    }
+    
+    for config_key, (arg_key, transform) in config_mappings.items():
+        if config_key in config:
+            current_value = getattr(args, arg_key, None)
+            default_value = None
+            
+            if arg_key == 'verbose':
+                default_value = False
+            elif arg_key == 'default_patterns':
+                default_value = False
+            elif arg_key in ('exclude_dirs', 'exclude_files'):
+                default_value = ''
+            elif arg_key == 'format':
+                default_value = 'text'
+            elif arg_key == 'patterns':
+                default_value = None
+            
+            if current_value == default_value:
+                config_value = parse_config_value(config_key, config[config_key])
+                if config_key in ('exclude_dirs', 'exclude_files') and isinstance(config_value, set):
+                    config_value = ','.join(config_value)
+                setattr(args, arg_key, config_value)
+    
+    return args
+
+
 def main():
+    config = load_config()
+    
     parser = argparse.ArgumentParser(
         description='Scan codebases for leaked secrets and credentials',
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -254,6 +352,19 @@ Examples:
   %(prog)s . --verbose
   %(prog)s . --patterns custom_patterns.json
   %(prog)s . --pattern "MyAPI:api_[a-z]{10}:MyAPI key detected"
+
+Config File:
+  Create a .secret_scan.json in your project or home directory:
+  {
+    "exclude_dirs": ["node_modules", "venv", ".git"],
+    "exclude_files": ["*.min.js", "*.lock"],
+    "format": "json",
+    "verbose": true,
+    "patterns": "custom_patterns.json",
+    "default_patterns": false
+  }
+  
+  CLI arguments override config file values.
         """
     )
 
@@ -316,6 +427,7 @@ Examples:
     )
 
     args = parser.parse_args()
+    args = merge_args_with_config(args, config)
 
     patterns = {}
 
