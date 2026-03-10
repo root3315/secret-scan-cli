@@ -207,7 +207,8 @@ Text output looks like:
 
 ## Dependencies
 
-Just `colorama` for nice colored output. If it's not installed, the tool still works but without colors.
+- `colorama` - For colored terminal output (optional, falls back to plain text)
+- `tqdm` - For progress bar display during scans (optional, falls back to silent scanning)
 
 ## License
 

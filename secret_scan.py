@@ -18,6 +18,12 @@ try:
 except ImportError:
     COLORS_AVAILABLE = False
 
+try:
+    from tqdm import tqdm
+    TQDM_AVAILABLE = True
+except ImportError:
+    TQDM_AVAILABLE = False
+
 
 SECRET_PATTERNS: Dict[str, Tuple[str, str]] = {
     "AWS Access Key": (r'AKIA[0-9A-Z]{16}', "AWS Access Key ID detected"),
@@ -190,6 +196,7 @@ def scan_directory(
     all_findings = []
     files_scanned = 0
 
+    files_to_scan = []
     for dirpath, dirnames, filenames in os.walk(root_path):
         current_dir = Path(dirpath)
         dirnames[:] = [d for d in dirnames if not should_exclude_dir(d, exclude_dirs)]
@@ -200,12 +207,17 @@ def scan_directory(
             if should_exclude_file(filepath, exclude_files):
                 continue
 
-            files_scanned += 1
-            if verbose:
-                print(f"Scanning: {filepath}")
+            files_to_scan.append(filepath)
 
-            findings = scan_file(filepath, patterns)
-            all_findings.extend(findings)
+    progress_iter = tqdm(files_to_scan, desc="Scanning", unit="file", ncols=80) if TQDM_AVAILABLE else files_to_scan
+
+    for filepath in progress_iter:
+        files_scanned += 1
+        if verbose:
+            print(f"Scanning: {filepath}")
+
+        findings = scan_file(filepath, patterns)
+        all_findings.extend(findings)
 
     if verbose:
         print(f"\nTotal files scanned: {files_scanned}")
